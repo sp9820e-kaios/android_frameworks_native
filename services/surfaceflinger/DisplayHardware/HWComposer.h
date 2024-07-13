@@ -147,6 +147,14 @@ public:
     status_t setCursorPositionAsync(int32_t id, const Rect &pos);
 
     /*
+     *  return the number of physical display screen vendor supported.
+     * */
+    inline uint32_t getBuiltInDisplayNum() const
+    {
+        return mBuiltInDisplayNum;
+    }
+
+    /*
      * Interface to hardware composer's layers functionality.
      * This abstracts the HAL interface to layers which can evolve in
      * incompatible ways from one release to another.
@@ -371,6 +379,11 @@ private:
 
     // thread-safe
     mutable Mutex mEventControlLock;
+
+    /*
+     *  the number of physical screen verdor supported.
+     * */
+    uint32_t mBuiltInDisplayNum;
 };
 
 // ---------------------------------------------------------------------------

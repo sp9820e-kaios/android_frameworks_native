@@ -88,21 +88,58 @@ DisplayDevice::DisplayDevice(
       mPowerMode(HWC_POWER_MODE_OFF),
       mActiveConfig(0)
 {
-    mNativeWindow = new Surface(producer, false);
+    Surface* surface;
+    mNativeWindow = surface = new Surface(producer, false);
     ANativeWindow* const window = mNativeWindow.get();
-
     /*
      * Create our display's surface
      */
 
-    EGLSurface surface;
+    EGLSurface eglSurface;
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (config == EGL_NO_CONFIG) {
         config = RenderEngine::chooseEglConfig(display, format);
     }
-    surface = eglCreateWindowSurface(display, config, window, NULL);
-    eglQuerySurface(display, surface, EGL_WIDTH,  &mDisplayWidth);
-    eglQuerySurface(display, surface, EGL_HEIGHT, &mDisplayHeight);
+
+    /*
+     *  Sprd change here:
+     *  Enable EGL NV12 config for GPU output NV12 image, for
+     *  VirtualDisplay.
+     * */
+
+    if (mType >= DisplayDevice::DISPLAY_VIRTUAL)
+    {
+#ifndef GPU_IS_MIDGARD
+        EGLConfig nv12Config;
+        EGLint numConfigs = 0;
+        static EGLint sDefaultConfigAttribs[] = {
+            EGL_CONFIG_ID, 43, EGL_NONE };
+        eglChooseConfig(display, sDefaultConfigAttribs, &nv12Config, 1, &numConfigs);
+        eglSurface = eglCreateWindowSurface(display, nv12Config, window, NULL);
+#else
+        EGLConfig nv21Config;
+        EGLint numConfigs = 0;
+        static EGLint sDefaultConfigAttribs[] = {
+                EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_RENDERABLE_TYPE,
+                EGL_OPENGL_ES2_BIT,EGL_RECORDABLE_ANDROID,1,EGL_NONE	};
+        eglChooseConfig(display,sDefaultConfigAttribs,&nv21Config,1,&numConfigs);
+        eglSurface = eglCreateWindowSurface(display, nv21Config, window, NULL);
+#endif
+        /*
+         * Sync Framebuffer format to VirtualDisplay Surface.
+         * */
+        format = mDisplaySurface->getFBFormat();
+        native_window_set_buffers_format(window, format);
+    }
+    else
+    {
+        eglSurface = eglCreateWindowSurface(display, config, window, NULL);
+#ifdef ENABLE_FRAMEBUFFER_AFBC
+	native_window_set_buffers_format(window, HAL_PIXEL_FORMAT_RGB_888);
+#endif
+    }
+    eglQuerySurface(display, eglSurface, EGL_WIDTH,  &mDisplayWidth);
+    eglQuerySurface(display, eglSurface, EGL_HEIGHT, &mDisplayHeight);
 
     // Make sure that composition can never be stalled by a virtual display
     // consumer that isn't processing buffers fast enough. We have to do this
@@ -116,7 +153,7 @@ DisplayDevice::DisplayDevice(
 
     mConfig = config;
     mDisplay = display;
-    mSurface = surface;
+    mSurface = eglSurface;
     mFormat  = format;
     mPageFlipCount = 0;
     mViewport.makeInvalid();
@@ -140,8 +177,10 @@ DisplayDevice::DisplayDevice(
             break;
     }
 
-    // initialize the display orientation transform.
-    setProjection(DisplayState::eOrientationDefault, mViewport, mFrame);
+    setDisplayDevice();
+#ifdef NUM_FRAMEBUFFER_SURFACE_BUFFERS
+    surface->allocateBuffers();
+#endif
 }
 
 DisplayDevice::~DisplayDevice() {
@@ -293,9 +332,63 @@ EGLBoolean DisplayDevice::makeCurrent(EGLDisplay dpy, EGLContext ctx) const {
 void DisplayDevice::setViewportAndProjection() const {
     size_t w = mDisplayWidth;
     size_t h = mDisplayHeight;
+    char property[PROPERTY_VALUE_MAX];
+    if ((mType == DisplayDevice::DISPLAY_PRIMARY)
+        && (property_get("ro.sf.hwrotation", property, NULL) > 0)) {
+        //displayOrientation
+        switch (atoi(property)) {
+            case 90:
+            case 270:
+            w = mDisplayHeight;
+            h = mDisplayWidth;
+            break;
+            default:
+            break;
+        }
+    }
     Rect sourceCrop(0, 0, w, h);
     mFlinger->getRenderEngine().setViewportAndProjection(w, h, sourceCrop, h,
         false, Transform::ROT_0);
+}
+
+void DisplayDevice::setDisplayDevice()
+{
+	// initialize the display orientation transform.
+	// it's a constant that should come from the display driver.
+	int displayOrientation = DisplayState::eOrientationDefault;
+	char property[PROPERTY_VALUE_MAX];
+	if ((mType == DisplayDevice::DISPLAY_PRIMARY)
+           && (property_get("ro.sf.hwrotation", property, NULL) > 0)) {
+		//displayOrientation
+		switch (atoi(property)) {
+			case 90:
+			displayOrientation = DisplayState::eOrientation90;
+			break;
+
+			case 180:
+			displayOrientation = DisplayState::eOrientation180;
+			break;
+
+			case 270:
+			displayOrientation = DisplayState::eOrientation270;
+			break;
+		}
+	}
+
+	const int w = mDisplayWidth;
+	const int h = mDisplayHeight;
+	DisplayDevice::orientationToTransfrom(displayOrientation, w, h,
+	&mDisplayTransform);
+	if (displayOrientation & DisplayState::eOrientationSwapMask) {
+		mDisplayWidth = h;
+		mDisplayHeight = w;
+	} else {
+		mDisplayWidth = w;
+		mDisplayHeight = h;
+	}
+
+	// initialize the display orientation transform.
+	setProjection(DisplayState::eOrientationDefault, mViewport, mFrame);
 }
 
 // ----------------------------------------------------------------------------
@@ -480,7 +573,8 @@ void DisplayDevice::setProjection(int orientation,
     // The viewport and frame are both in the logical orientation.
     // Apply the logical translation, scale to physical size, apply the
     // physical translation and finally rotate to the physical orientation.
-    mGlobalTransform = R * TP * S * TL;
+    mGlobalTransform = mDisplayTransform * R * TP * S * TL;
+    mOriginalTransform = R * TP * S * TL;
 
     const uint8_t type = mGlobalTransform.getType();
     mNeedsFiltering = (!mGlobalTransform.preserveRects() ||

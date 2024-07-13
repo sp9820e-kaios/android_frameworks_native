@@ -20,28 +20,28 @@
 //#define LOG_NDEBUG 0
 
 // Log detailed debug messages about each inbound event notification to the dispatcher.
-#define DEBUG_INBOUND_EVENT_DETAILS 0
+#define DEBUG_INBOUND_EVENT_DETAILS 1
 
 // Log detailed debug messages about each outbound event processed by the dispatcher.
-#define DEBUG_OUTBOUND_EVENT_DETAILS 0
+#define DEBUG_OUTBOUND_EVENT_DETAILS 1
 
 // Log debug messages about the dispatch cycle.
-#define DEBUG_DISPATCH_CYCLE 0
+#define DEBUG_DISPATCH_CYCLE 1
 
 // Log debug messages about registrations.
-#define DEBUG_REGISTRATION 0
+#define DEBUG_REGISTRATION 1
 
 // Log debug messages about input event injection.
-#define DEBUG_INJECTION 0
+#define DEBUG_INJECTION 1
 
 // Log debug messages about input focus tracking.
-#define DEBUG_FOCUS 0
+#define DEBUG_FOCUS 1
 
 // Log debug messages about the app switch latency optimization.
-#define DEBUG_APP_SWITCH 0
+#define DEBUG_APP_SWITCH 1
 
 // Log debug messages about hover events.
-#define DEBUG_HOVER 0
+#define DEBUG_HOVER 1
 
 #include "InputDispatcher.h"
 
@@ -49,6 +49,7 @@
 #include <cutils/log.h>
 #include <powermanager/PowerManager.h>
 #include <ui/Region.h>
+#include <cutils/properties.h>//SPRD add for debug
 
 #include <stddef.h>
 #include <unistd.h>
@@ -60,6 +61,12 @@
 #define INDENT2 "    "
 #define INDENT3 "      "
 #define INDENT4 "        "
+
+// SPRD: Switch debug log by command @{
+static bool gInputDispatcherLog = false;
+#undef ALOGD
+#define ALOGD(...) if (gInputDispatcherLog) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+/// @}
 
 namespace android {
 
@@ -211,6 +218,20 @@ InputDispatcher::InputDispatcher(const sp<InputDispatcherPolicyInterface>& polic
     mKeyRepeatState.lastKeyEntry = NULL;
 
     policy->getDispatcherConfiguration(&mConfig);
+
+    // SPRD: Switch log by command @{
+    char buf[PROPERTY_VALUE_MAX];
+    property_get("persist.sys.input.log", buf, "false");
+    if(!strcmp(buf,"true")){
+        gInputDispatcherLog = true;
+        ALOGD("InputDispatcher constructor debug log is enabled");
+	InputChannel::switchInputTransportLog(gInputDispatcherLog);
+    } else if (!strcmp(buf, "false")) {
+        gInputDispatcherLog = false;
+        ALOGD("InputDispatcher constructor debug log is disabled");
+	InputChannel::switchInputTransportLog(gInputDispatcherLog);
+    }
+    // @}
 }
 
 InputDispatcher::~InputDispatcher() {
@@ -1225,6 +1246,8 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
                     int32_t outsideTargetFlags = InputTarget::FLAG_DISPATCH_AS_OUTSIDE;
                     if (isWindowObscuredAtPointLocked(windowHandle, x, y)) {
                         outsideTargetFlags |= InputTarget::FLAG_WINDOW_IS_OBSCURED;
+                    } else if (isWindowObscuredLocked(windowHandle)) {
+                        outsideTargetFlags |= InputTarget::FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
                     }
 
                     mTempTouchState.addOrUpdateWindow(
@@ -1262,6 +1285,8 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
         }
         if (isWindowObscuredAtPointLocked(newTouchedWindowHandle, x, y)) {
             targetFlags |= InputTarget::FLAG_WINDOW_IS_OBSCURED;
+        } else if (isWindowObscuredLocked(newTouchedWindowHandle)) {
+            targetFlags |= InputTarget::FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
         }
 
         // Update hover state.
@@ -1437,6 +1462,7 @@ int32_t InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime,
                                 == InputWindowInfo::TYPE_WALLPAPER) {
                     mTempTouchState.addOrUpdateWindow(windowHandle,
                             InputTarget::FLAG_WINDOW_IS_OBSCURED
+                                    | InputTarget::FLAG_WINDOW_IS_PARTIALLY_OBSCURED
                                     | InputTarget::FLAG_DISPATCH_AS_IS,
                             BitSet32(0));
                 }
@@ -1625,6 +1651,27 @@ bool InputDispatcher::isWindowObscuredAtPointLocked(
         if (otherInfo->displayId == displayId
                 && otherInfo->visible && !otherInfo->isTrustedOverlay()
                 && otherInfo->frameContainsPoint(x, y)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+bool InputDispatcher::isWindowObscuredLocked(const sp<InputWindowHandle>& windowHandle) const {
+    int32_t displayId = windowHandle->getInfo()->displayId;
+    const InputWindowInfo* windowInfo = windowHandle->getInfo();
+    size_t numWindows = mWindowHandles.size();
+    for (size_t i = 0; i < numWindows; i++) {
+        sp<InputWindowHandle> otherHandle = mWindowHandles.itemAt(i);
+        if (otherHandle == windowHandle) {
+            break;
+        }
+
+        const InputWindowInfo* otherInfo = otherHandle->getInfo();
+        if (otherInfo->displayId == displayId
+                && otherInfo->visible && !otherInfo->isTrustedOverlay()
+                && otherInfo->overlaps(windowInfo)) {
             return true;
         }
     }
@@ -1905,6 +1952,9 @@ void InputDispatcher::enqueueDispatchEntryLocked(
         if (dispatchEntry->targetFlags & InputTarget::FLAG_WINDOW_IS_OBSCURED) {
             dispatchEntry->resolvedFlags |= AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED;
         }
+        if (dispatchEntry->targetFlags & InputTarget::FLAG_WINDOW_IS_PARTIALLY_OBSCURED) {
+            dispatchEntry->resolvedFlags |= AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
+        }
 
         if (!connection->inputState.trackMotion(motionEntry,
                 dispatchEntry->resolvedAction, dispatchEntry->resolvedFlags)) {
@@ -1947,7 +1997,6 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
         switch (eventEntry->type) {
         case EventEntry::TYPE_KEY: {
             KeyEntry* keyEntry = static_cast<KeyEntry*>(eventEntry);
-
             // Publish the key event.
             status = connection->inputPublisher.publishKeyEvent(dispatchEntry->seq,
                     keyEntry->deviceId, keyEntry->source,
@@ -1991,7 +2040,6 @@ void InputDispatcher::startDispatchCycleLocked(nsecs_t currentTime,
                     usingCoords = scaledCoords;
                 }
             }
-
             // Publish the motion event.
             status = connection->inputPublisher.publishMotionEvent(dispatchEntry->seq,
                     motionEntry->deviceId, motionEntry->source,
@@ -2945,9 +2993,9 @@ void InputDispatcher::setFocusedApplication(
 }
 
 void InputDispatcher::setInputDispatchMode(bool enabled, bool frozen) {
-#if DEBUG_FOCUS
+//#if DEBUG_FOCUS //open frozen log
     ALOGD("setInputDispatchMode: enabled=%d, frozen=%d", enabled, frozen);
-#endif
+//#endif
 
     bool changed;
     { // acquire lock
@@ -3487,9 +3535,23 @@ void InputDispatcher::doNotifyANRLockedInterruptible(
         CommandEntry* commandEntry) {
     mLock.unlock();
 
+    // Add log to ensure ANR @{
+    ALOGI("Before notify ANR: %s.  "
+            "Reason: %s",
+            getApplicationWindowLabelLocked(
+            commandEntry->inputApplicationHandle, commandEntry->inputWindowHandle).string(),
+            commandEntry->reason.string());
+    // @}
     nsecs_t newTimeout = mPolicy->notifyANR(
             commandEntry->inputApplicationHandle, commandEntry->inputWindowHandle,
             commandEntry->reason);
+    // Add log to ensure ANR @{
+    ALOGI("After notify ANR: %s.  "
+            "The newtimeout is %0.1fms.  Reason: %s",
+            getApplicationWindowLabelLocked(
+            commandEntry->inputApplicationHandle, commandEntry->inputWindowHandle).string(),
+            newTimeout * 0.000001f, commandEntry->reason.string());
+    // @}
 
     mLock.lock();
 
@@ -3795,6 +3857,20 @@ void InputDispatcher::traceWaitQueueLengthLocked(const sp<Connection>& connectio
 
 void InputDispatcher::dump(String8& dump) {
     AutoMutex _l(mLock);
+
+    // SPRD: Switch log by command @{
+    char buf[PROPERTY_VALUE_MAX];
+    property_get("persist.sys.input.log", buf, "false");
+    if(!strcmp(buf,"true")){
+        gInputDispatcherLog = true;
+        ALOGD("Input dispatcher debug log is enabled");
+	InputChannel::switchInputTransportLog(gInputDispatcherLog);
+    } else if (!strcmp(buf, "false")) {
+        gInputDispatcherLog = false;
+        ALOGD("Input dispatcher debug log is disabled");
+	InputChannel::switchInputTransportLog(gInputDispatcherLog);
+    }
+    // @}
 
     dump.append("Input Dispatcher State:\n");
     dumpDispatchStateLocked(dump);

@@ -1061,6 +1061,16 @@ static int validate_apk_path_internal(const char *path, int maxSubdirs) {
         if (maxSubdirs < 2) {
             maxSubdirs = 2;
         }
+    }
+    /* SPRD: add feature for scan the preload directory @{ */
+    else if (!strncmp(path, android_app_preload_dir.path, android_app_preload_dir.len)) {
+        dir = &android_app_preload_dir;
+    }
+    /* @} */
+    /* SPRD: add feature for scan the vital directory @{ */
+    else if(!strncmp(path, android_app_vital_dir.path, android_app_vital_dir.len)){
+        dir = &android_app_vital_dir;
+    /* @} */
     } else {
         return -1;
     }

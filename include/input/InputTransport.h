@@ -179,10 +179,14 @@ public:
 
     /* Returns a new object that has a duplicate of this channel's fd. */
     sp<InputChannel> dup() const;
+    // SPRD: Switch debug log by command
+    static void switchInputTransportLog(bool enable);
 
 private:
     String8 mName;
     int mFd;
+
+    static void setSocketName(int socket0, int socket1);
 };
 
 /*

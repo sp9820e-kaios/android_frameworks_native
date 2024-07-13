@@ -89,6 +89,14 @@ else
     LOCAL_CFLAGS += -DMAX_VIRTUAL_DISPLAY_DIMENSION=0
 endif
 
+ifeq ($(strip $(TARGET_GPU_PLATFORM)),midgard)
+    LOCAL_CFLAGS += -DGPU_IS_MIDGARD
+endif
+
+ifeq ($(ENABLE_FRAMEBUFFER_AFBC),1)
+    LOCAL_CFLAGS += -DENABLE_FRAMEBUFFER_AFBC=$(ENABLE_FRAMEBUFFER_AFBC)
+endif
+
 LOCAL_CFLAGS += -fvisibility=hidden -Werror=format
 LOCAL_CFLAGS += -std=c++11
 

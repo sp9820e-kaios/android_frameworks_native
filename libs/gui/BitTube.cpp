@@ -17,11 +17,13 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <utils/Errors.h>
+#include <cutils/properties.h>
 
 #include <binder/Parcel.h>
 
@@ -80,6 +82,13 @@ void BitTube::init(size_t rcvbuf, size_t sndbuf) {
         fcntl(sockets[1], F_SETFL, O_NONBLOCK);
         mReceiveFd = sockets[0];
         mSendFd = sockets[1];
+
+        // SPRD: Set a name for socket, which is used for debug
+        char value[PROPERTY_VALUE_MAX];
+        property_get("ro.debuggable", value, "");
+        if (strcmp(value, "1") == 0) {
+            setSocketName(sockets[0], sockets[1]);
+        }
     } else {
         mReceiveFd = -errno;
         ALOGE("BitTube: pipe creation failed (%s)", strerror(-mReceiveFd));
@@ -170,6 +179,57 @@ ssize_t BitTube::recvObjects(const sp<BitTube>& tube,
 
     //ALOGE_IF(size<0, "error %d receiving %d events", size, count);
     return size < 0 ? size : size / static_cast<ssize_t>(objSize);
+}
+
+static const int FILE_NAME_LEN = 1024;
+static const int SOCKET_NAME_LEN = 108;
+
+//SPRD: bind a name to sockets
+void BitTube::setSocketName(int socket0, int socket1)
+{
+    struct sockaddr_un sockAddr;
+    char sockName[SOCKET_NAME_LEN];
+    FILE *fp;
+    char fileName[sizeof("/proc/%u/comm") + sizeof(int)*3];
+    char pidName[FILE_NAME_LEN] = {'\0'};
+    char tidName[FILE_NAME_LEN] = {'\0'};
+    int pid = getpid();
+    int tid = gettid();
+
+    sprintf(fileName, "/proc/%d/comm", pid);
+    if((fp = fopen(fileName, "r")) != NULL) {
+        if (fgets(pidName, FILE_NAME_LEN, fp) != NULL)
+            pidName[strlen(pidName) - 1] = '\0';
+        fclose(fp);
+    }
+
+    sprintf(fileName, "/proc/%d/comm", tid);
+    if((fp = fopen(fileName, "r")) != NULL) {
+        if (fgets(tidName, FILE_NAME_LEN, fp) != NULL)
+            tidName[strlen(tidName) - 1] = '\0';
+        fclose(fp);
+    }
+
+    if (pidName[0] == '\0')
+        sprintf(pidName, "t%d", pid);
+    if (tidName[0] == '\0')
+        sprintf(tidName, "t%d", tid);
+
+    if (socket0 >= 0) {
+        snprintf(sockName, SOCKET_NAME_LEN - 1, "%s-%s-f%d", pidName, tidName, socket0);
+        memset(&sockAddr, 0, sizeof(sockAddr));
+        sockAddr.sun_family = AF_UNIX;
+        strncpy(sockAddr.sun_path + 1, sockName, sizeof(sockAddr.sun_path) - 2);
+        bind(socket0, reinterpret_cast<struct sockaddr *> (&sockAddr), sizeof(struct sockaddr_un));
+    }
+
+    if (socket1 >= 0) {
+        snprintf(sockName, SOCKET_NAME_LEN - 1, "%s-%s-f%d", pidName, tidName, socket1);
+        memset(&sockAddr, 0, sizeof(sockAddr));
+        sockAddr.sun_family = AF_UNIX;
+        strncpy(sockAddr.sun_path + 1, sockName, sizeof(sockAddr.sun_path) - 2);
+        bind(socket1, reinterpret_cast<struct sockaddr *> (&sockAddr), sizeof(struct sockaddr_un));
+    }
 }
 
 // ----------------------------------------------------------------------------

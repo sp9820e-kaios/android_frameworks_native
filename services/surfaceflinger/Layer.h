@@ -301,6 +301,7 @@ public:
     void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip) const;
     void setFiltering(bool filtering);
     bool getFiltering() const;
+    void setCaptureScreen(bool captureScreen);
 
     // only for debugging
     inline const sp<GraphicBuffer>& getActiveBuffer() const { return mActiveBuffer; }
@@ -419,6 +420,7 @@ private:
     Vector<BufferItem> mQueueItems;
     uint64_t mLastFrameNumberReceived;
     bool mUpdateTexImageFailed; // This is only modified from the main thread
+    bool mCaptureScreen;
 };
 
 // ---------------------------------------------------------------------------

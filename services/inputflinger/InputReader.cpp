@@ -47,6 +47,7 @@
 #include <cutils/log.h>
 #include <input/Keyboard.h>
 #include <input/VirtualKeyMap.h>
+#include <cutils/properties.h>//SPRD add for debug
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -62,9 +63,16 @@
 #define INDENT4 "        "
 #define INDENT5 "          "
 
+#define ALOGD_READER(...) if (gInputReaderLog) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+
 namespace android {
 
 // --- Constants ---
+static bool gInputReaderLog = false;//SPRD add for debug
+
+/* SPRD: add mouse acquirement @ { */
+static bool mScroll = false;
+/* @ } */
 
 // Maximum number of slots supported when using the slot-based Multitouch Protocol B.
 static const size_t MAX_SLOTS = 32;
@@ -215,6 +223,74 @@ static void synthesizeButtonKeys(InputReaderContext* context, int32_t action,
             AMOTION_EVENT_BUTTON_FORWARD, AKEYCODE_FORWARD);
 }
 
+/* SPRD: add mouse acquirement @ { */
+static bool isInteractive = true;
+static bool isEnableFor3rdApp = false;
+static bool isMouseMode(){
+    char buf[PROPERTY_VALUE_MAX];
+    property_get("persist.sys.mousemode", buf, "false");
+    ALOGD("isEnableFor3rdApp = %d" ,isEnableFor3rdApp);
+    if(!strcmp(buf, "false")&& isEnableFor3rdApp == false){
+        return false;
+    }
+    if(isInteractive){
+        return true;
+    }
+    return false;
+}
+static bool isRawEventCodeConvert(const RawEvent* rawEvents){
+    switch(rawEvents->code){
+        case KEY_UP:
+        case KEY_DOWN:
+        case KEY_LEFT:
+        case KEY_RIGHT:
+        case KEY_ENTER:
+        case KEY_OK:
+        case KEY_MENU:
+        case KEY_SELECT:
+            return true;           
+    }
+    return false;
+}
+
+static bool isNavCode(const RawEvent* rawEvents){
+    if (rawEvents->type == EV_KEY) {
+        switch(rawEvents->code){
+            case KEY_UP:
+            case KEY_DOWN:
+            case KEY_LEFT:
+            case KEY_RIGHT:
+            case KEY_MENU:
+                return true;                    
+        }        
+    }
+    return false;
+}
+
+static void timerCallback(union sigval val){
+    CursorInputMapper *cim = (CursorInputMapper *)val.sival_ptr;
+    if (!mScroll) {
+        cim->longProcess(&cim->mRawEvent);
+    }
+    return;
+}
+
+static const int32_t scanCodeRotationMap[][4] = {
+    // key codes enumerated counter-clockwise with the original (unrotated) key first
+    // no rotation,        90 degree rotation,  180 degree rotation, 270 degree rotation
+    { KEY_DOWN,   KEY_RIGHT,  KEY_UP,     KEY_LEFT  },
+    { KEY_RIGHT,  KEY_UP,     KEY_LEFT,   KEY_DOWN  },
+    { KEY_UP,     KEY_LEFT,   KEY_DOWN,   KEY_RIGHT  },
+    { KEY_LEFT,   KEY_DOWN,   KEY_RIGHT,  KEY_UP  },
+};
+static const size_t scanCodeRotationMapSize =
+    sizeof(scanCodeRotationMap) / sizeof(scanCodeRotationMap[0]);
+
+static int32_t rotateScanCode(int32_t scanCode, int32_t orientation) {
+    return rotateValueUsingRotationMap(scanCode, orientation,
+        scanCodeRotationMap, scanCodeRotationMapSize);
+}
+/* @ } */
 
 // --- InputReaderConfiguration ---
 
@@ -260,6 +336,18 @@ InputReader::InputReader(const sp<EventHubInterface>& eventHub,
 
         refreshConfigurationLocked(0);
         updateGlobalMetaStateLocked();
+
+	// SPRD: Switch log by command @{
+        char buf[PROPERTY_VALUE_MAX];
+        property_get("persist.sys.input.log", buf, "false");
+        if(!strcmp(buf,"true")){
+            gInputReaderLog = true;
+            ALOGD("InpuReader constructor debug log is enabled");
+        } else if (!strcmp(buf, "false")) {
+            gInputReaderLog = false;
+            ALOGD("InpuReader constructor debug log is disabled");
+        }
+	// @}
     } // release lock
 }
 
@@ -334,6 +422,10 @@ void InputReader::loopOnce() {
 }
 
 void InputReader::processEventsLocked(const RawEvent* rawEvents, size_t count) {
+    if(rawEvents->value == 0 || rawEvents->value == 1 || rawEvents->value == -1){ // 0:A and B type key up or A type touch or move end; -1: B type touch or move up
+        ALOGD("processEventsLocked: type=%d Count=%d code=%d value=%d deviceId=%d",
+                rawEvents->type, count,rawEvents->code,rawEvents->value,rawEvents->deviceId);
+    }
     for (const RawEvent* rawEvent = rawEvents; count;) {
         int32_t type = rawEvent->type;
         size_t batchSize = 1;
@@ -502,6 +594,16 @@ InputDevice* InputReader::createDeviceLocked(int32_t deviceId, int32_t controlle
 
 void InputReader::processEventsForDeviceLocked(int32_t deviceId,
         const RawEvent* rawEvents, size_t count) {
+    /* SPRD: add mouse acquirement @ { */
+    if(isMouseMode() && isRawEventCodeConvert(rawEvents)){
+        for (size_t i = 0; i < mDevices.size(); i++) {
+            if(strcmp(mDevices.valueAt(i)->getName().string(), "Virtual") == 0){
+                deviceId = mDevices.valueAt(i)->getId();
+                break;
+            }
+        }
+    }
+    /*@}*/
     ssize_t deviceIndex = mDevices.indexOfKey(deviceId);
     if (deviceIndex < 0) {
         ALOGW("Discarding event for unknown deviceId %d.", deviceId);
@@ -738,6 +840,25 @@ void InputReader::requestRefreshConfiguration(uint32_t changes) {
     }
 }
 
+/* SPRD: add mouse acquirement @ { */
+void InputReader::setInteractive(bool isActive) {
+    isInteractive = isActive;
+}
+/* @ } */
+
+void InputReader::setEnableFor3rdApp(bool enable) {
+    isEnableFor3rdApp = enable;
+}
+
+bool InputReader::getEnableFor3rdApp() {
+    return isEnableFor3rdApp;
+}
+
+bool InputReader::getScrollMode() {
+    return mScroll;
+}
+/* @ } */
+
 void InputReader::vibrate(int32_t deviceId, const nsecs_t* pattern, size_t patternSize,
         ssize_t repeat, int32_t token) {
     AutoMutex _l(mLock);
@@ -761,6 +882,18 @@ void InputReader::cancelVibrate(int32_t deviceId, int32_t token) {
 
 void InputReader::dump(String8& dump) {
     AutoMutex _l(mLock);
+
+    // SPRD: Switch log by command @{
+    char buf[PROPERTY_VALUE_MAX];
+    property_get("persist.sys.input.log", buf, "false");
+    if(!strcmp(buf,"true")){
+        gInputReaderLog = true;
+        ALOGD("Input reader debug log is enabled");
+    } else if (!strcmp(buf, "false")) {
+        gInputReaderLog = false;
+        ALOGD("Input reader debug log is disabled");
+    }
+    // @}
 
     mEventHub->dump(dump);
     dump.append("\n");
@@ -1032,6 +1165,9 @@ void InputDevice::process(const RawEvent* rawEvents, size_t count) {
     // in the order received.
     size_t numMappers = mMappers.size();
     for (const RawEvent* rawEvent = rawEvents; count--; rawEvent++) {
+	ALOGD_READER("Input event: device=%d type=0x%04x code=0x%04x value=0x%08x when=%lld",
+                rawEvent->deviceId, rawEvent->type, rawEvent->code, rawEvent->value,
+                rawEvent->when);
 #if DEBUG_RAW_EVENTS
         ALOGD("Input event: device=%d type=0x%04x code=0x%04x value=0x%08x when=%lld",
                 rawEvent->deviceId, rawEvent->type, rawEvent->code, rawEvent->value,
@@ -1250,7 +1386,8 @@ uint32_t CursorButtonAccumulator::getButtonState() const {
         result |= AMOTION_EVENT_BUTTON_PRIMARY;
     }
     if (mBtnRight) {
-        result |= AMOTION_EVENT_BUTTON_SECONDARY;
+        //result |= AMOTION_EVENT_BUTTON_SECONDARY;
+        result |= AMOTION_EVENT_BUTTON_BACK;
     }
     if (mBtnMiddle) {
         result |= AMOTION_EVENT_BUTTON_TERTIARY;
@@ -1264,6 +1401,19 @@ uint32_t CursorButtonAccumulator::getButtonState() const {
     return result;
 }
 
+/* SPRD: add mouse acquirement @ { */
+void CursorButtonAccumulator::setButtonState(const RawEvent* rawEvent) {
+    if (rawEvent->type == EV_KEY) {
+        switch (rawEvent->code) {
+            case KEY_ENTER:
+            case KEY_OK:
+            case KEY_SELECT:
+                mBtnLeft = rawEvent->value;
+                break;                
+        }
+    }
+}
+/* @ } */
 
 // --- CursorMotionAccumulator ---
 
@@ -1297,6 +1447,28 @@ void CursorMotionAccumulator::finishSync() {
     clearRelativeAxes();
 }
 
+/* SPRD: add mouse acquirement @ { */
+void CursorMotionAccumulator::setRelXY(DisplayViewport v,const RawEvent* rawEvent) {
+    int32_t scanCode = 0;
+    if (rawEvent->type == EV_KEY) {
+        scanCode = rotateScanCode(rawEvent->code,v.orientation);
+        switch (scanCode) {
+            case KEY_UP:
+                mRelY = -(rawEvent->value*10);
+                break;
+            case KEY_DOWN:
+                mRelY = (rawEvent->value*10);
+                break;
+            case KEY_LEFT:
+                mRelX = -(rawEvent->value*10);
+                break;
+            case KEY_RIGHT:
+                mRelX = (rawEvent->value*10);
+                break;                
+        }        
+    }
+}
+/* @ } */
 
 // --- CursorScrollAccumulator ---
 
@@ -1336,6 +1508,28 @@ void CursorScrollAccumulator::finishSync() {
     clearRelativeAxes();
 }
 
+/* SPRD: add mouse acquirement @ { */
+void CursorScrollAccumulator::setRelWH(float x,float y,DisplayViewport v,const RawEvent* rawEvent) {
+    int32_t scanCode = 0;
+    if (rawEvent->type == EV_KEY) {
+        scanCode = rotateScanCode(rawEvent->code,v.orientation);
+        switch (scanCode) {
+            case KEY_UP:
+                    mRelWheel = (rawEvent->value*2);
+                break;
+            case KEY_DOWN:
+                    mRelWheel = -(rawEvent->value*2);
+                break;
+            case KEY_LEFT:
+                    mRelHWheel = -(rawEvent->value*2);
+                break;
+            case KEY_RIGHT:
+                    mRelHWheel = (rawEvent->value*2);
+                break;                
+        }        
+    }
+}
+/* @ } */
 
 // --- TouchButtonAccumulator ---
 
@@ -2170,6 +2364,11 @@ void KeyboardInputMapper::reset(nsecs_t when) {
 }
 
 void KeyboardInputMapper::process(const RawEvent* rawEvent) {
+    /* SPRD: add sensor acquirement @ { */
+    if(isMouseMode() && isRawEventCodeConvert(rawEvent)){
+        return;
+    }
+    /*@}*/
     switch (rawEvent->type) {
     case EV_KEY: {
         int32_t scanCode = rawEvent->code;
@@ -2290,6 +2489,7 @@ void KeyboardInputMapper::processKey(nsecs_t when, bool down, int32_t keyCode,
     NotifyKeyArgs args(when, getDeviceId(), mSource, policyFlags,
             down ? AKEY_EVENT_ACTION_DOWN : AKEY_EVENT_ACTION_UP,
             AKEY_EVENT_FLAG_FROM_SYSTEM, keyCode, scanCode, newMetaState, downTime);
+    ALOGD_READER("processKey call dispatcher down=%d",down);
     getListener()->notifyKey(&args);
 }
 
@@ -2358,9 +2558,23 @@ void KeyboardInputMapper::updateLedStateForModifier(LedState& ledState,
 
 CursorInputMapper::CursorInputMapper(InputDevice* device) :
         InputMapper(device) {
+    /* SPRD: add mouse acquirement @ {*/
+    struct sigevent se;
+    se.sigev_notify = SIGEV_THREAD;
+    se.sigev_value.sival_ptr = this;
+    se.sigev_notify_function = timerCallback;
+    se.sigev_notify_attributes = NULL;
+    timer_create(CLOCK_MONOTONIC, &se, &mTimerId);
+    /* @ }*/
 }
 
 CursorInputMapper::~CursorInputMapper() {
+    /* SPRD: add mouse acquirement @ {*/
+    if(mTimerId != NULL){
+        timer_delete(mTimerId);
+        mTimerId = NULL;
+    }
+    /* @ } */
 }
 
 uint32_t CursorInputMapper::getSources() {
@@ -2461,6 +2675,9 @@ void CursorInputMapper::configure(nsecs_t when,
         }
         bumpGeneration();
     }
+/* SPRD: add mouse acquirement @ { */
+    config->getDisplayInfo(false, &mDisplayView);
+/* @ } */
 }
 
 void CursorInputMapper::configureParameters() {
@@ -2520,14 +2737,85 @@ void CursorInputMapper::reset(nsecs_t when) {
 }
 
 void CursorInputMapper::process(const RawEvent* rawEvent) {
+    struct itimerspec ts;
+    int32_t currentButtonState;
+    /* SPRD: add mouse acquirement @ { */
+    float x,y;
+    /* @ } */
     mCursorButtonAccumulator.process(rawEvent);
     mCursorMotionAccumulator.process(rawEvent);
     mCursorScrollAccumulator.process(rawEvent);
+    /* SPRD: add mouse acquirement @ { */
+    if(isMouseMode()){
+        ALOGD("rawEvent->code = %d ,rawEvent->value = %d",rawEvent->code,rawEvent->value);
+        if(rawEvent->code == KEY_MENU && rawEvent->value == 0) {
+            mScroll = !mScroll;
+            getPolicy()->updateIcon();
+            ALOGD("mScroll = %d", mScroll);
+        }
+        if (mScroll) {
+            mCursorButtonAccumulator.setButtonState(rawEvent);
+            //mCursorMotionAccumulator.setRelXY(mDisplayView,rawEvent);
+            mPointerController->getPosition(&x, &y);
+            mCursorScrollAccumulator.setRelWH(x,y,mDisplayView,rawEvent);
+        }else {
+            mCursorButtonAccumulator.setButtonState(rawEvent);
+            mCursorMotionAccumulator.setRelXY(mDisplayView,rawEvent);
+        }
+    }
+    /* @ } */
 
     if (rawEvent->type == EV_SYN && rawEvent->code == SYN_REPORT) {
         sync(rawEvent->when);
+        /* SPRD: add mouse acquirement @ { */
+        currentButtonState = mCursorButtonAccumulator.getButtonState();
+        if(isMouseMode() && currentButtonState == 0 && isNavKeyEvent()){
+            ts.it_value.tv_sec = 0;
+            ts.it_value.tv_nsec = 300000000;//ms
+            ts.it_interval.tv_sec = 0;
+            ts.it_interval.tv_nsec = 50000000;//ms
+            timer_settime(mTimerId, 0, &ts, NULL);
+        }else{
+            ts.it_value.tv_sec = 0;
+            ts.it_value.tv_nsec = 0;//ms
+            ts.it_interval.tv_sec = 0;
+            ts.it_interval.tv_nsec = 0;//ms
+            timer_settime(mTimerId, 0, &ts, NULL);
+            memset(&mRawEvent, 0, sizeof(RawEvent));
+        }
+        /* @ } */
     }
+
+    /* SPRD: add mouse acquirement @ { */
+    if(isMouseMode() && isNavCode(rawEvent)){
+        memcpy(&mRawEvent, rawEvent, sizeof(RawEvent));
+    }
+    /* @ } */
 }
+
+/* SPRD: add mouse acquirement @ { */
+void CursorInputMapper::longProcess(RawEvent* rawEvent) {
+    //mCursorButtonAccumulator.process(rawEvent);
+    //mCursorMotionAccumulator.process(rawEvent);
+    //mCursorScrollAccumulator.process(rawEvent);
+    //mCursorButtonAccumulator.setButtonState(rawEvent);
+    mCursorMotionAccumulator.setRelXY(mDisplayView,rawEvent);
+    sync(rawEvent->when);
+}
+
+bool CursorInputMapper::isNavKeyEvent() {
+    if(mRawEvent.value == 1){
+        switch(mRawEvent.code){
+            case KEY_UP:
+            case KEY_DOWN:
+            case KEY_LEFT:
+            case KEY_RIGHT:
+                return true;                    
+        }        
+    }
+    return false;
+}
+/* @ } */
 
 void CursorInputMapper::sync(nsecs_t when) {
     int32_t lastButtonState = mButtonState;
@@ -2686,6 +2974,7 @@ void CursorInputMapper::sync(nsecs_t when) {
         if (scrolled) {
             pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_VSCROLL, vscroll);
             pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_HSCROLL, hscroll);
+
 
             NotifyMotionArgs scrollArgs(when, getDeviceId(), mSource, policyFlags,
                     AMOTION_EVENT_ACTION_SCROLL, 0, 0, metaState, currentButtonState,
@@ -4216,10 +4505,10 @@ bool TouchInputMapper::consumeRawTouches(nsecs_t when, uint32_t policyFlags) {
             // Pointer went up while virtual key was down.
             mCurrentVirtualKey.down = false;
             if (!mCurrentVirtualKey.ignored) {
-#if DEBUG_VIRTUAL_KEYS
+//#if DEBUG_VIRTUAL_KEYS //open virtural key log
                 ALOGD("VirtualKeys: Generating key up: keyCode=%d, scanCode=%d",
                         mCurrentVirtualKey.keyCode, mCurrentVirtualKey.scanCode);
-#endif
+//#endif
                 dispatchVirtualKey(when, policyFlags,
                         AKEY_EVENT_ACTION_UP,
                         AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_VIRTUAL_HARD_KEY);
@@ -4244,10 +4533,10 @@ bool TouchInputMapper::consumeRawTouches(nsecs_t when, uint32_t policyFlags) {
         // into the main display surface.
         mCurrentVirtualKey.down = false;
         if (!mCurrentVirtualKey.ignored) {
-#if DEBUG_VIRTUAL_KEYS
+//#if DEBUG_VIRTUAL_KEYS //open virtural key log
             ALOGD("VirtualKeys: Canceling key: keyCode=%d, scanCode=%d",
                     mCurrentVirtualKey.keyCode, mCurrentVirtualKey.scanCode);
-#endif
+//#endif
             dispatchVirtualKey(when, policyFlags,
                     AKEY_EVENT_ACTION_UP,
                     AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_VIRTUAL_HARD_KEY
@@ -4274,11 +4563,11 @@ bool TouchInputMapper::consumeRawTouches(nsecs_t when, uint32_t policyFlags) {
                             when, getDevice(), virtualKey->keyCode, virtualKey->scanCode);
 
                     if (!mCurrentVirtualKey.ignored) {
-#if DEBUG_VIRTUAL_KEYS
+//#if DEBUG_VIRTUAL_KEYS //open virtural key log
                         ALOGD("VirtualKeys: Generating key down: keyCode=%d, scanCode=%d",
                                 mCurrentVirtualKey.keyCode,
                                 mCurrentVirtualKey.scanCode);
-#endif
+//#endif
                         dispatchVirtualKey(when, policyFlags,
                                 AKEY_EVENT_ACTION_DOWN,
                                 AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_VIRTUAL_HARD_KEY);
@@ -4315,11 +4604,13 @@ void TouchInputMapper::dispatchVirtualKey(nsecs_t when, uint32_t policyFlags,
     int32_t keyCode = mCurrentVirtualKey.keyCode;
     int32_t scanCode = mCurrentVirtualKey.scanCode;
     nsecs_t downTime = mCurrentVirtualKey.downTime;
+    nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
     int32_t metaState = mContext->getGlobalMetaState();
     policyFlags |= POLICY_FLAG_VIRTUAL;
 
     NotifyKeyArgs args(when, getDeviceId(), AINPUT_SOURCE_KEYBOARD, policyFlags,
             keyEventAction, keyEventFlags, keyCode, scanCode, metaState, downTime);
+    ALOGD_READER("dispatchVirtualKey now(ns): %lld",now);
     getListener()->notifyKey(&args);
 }
 
@@ -4344,11 +4635,13 @@ void TouchInputMapper::dispatchTouches(nsecs_t when, uint32_t policyFlags) {
     BitSet32 lastIdBits = mLastCookedState.cookedPointerData.touchingIdBits;
     int32_t metaState = getContext()->getGlobalMetaState();
     int32_t buttonState = mCurrentCookedState.buttonState;
+    nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
 
     if (currentIdBits == lastIdBits) {
         if (!currentIdBits.isEmpty()) {
             // No pointer id changes so this is a move event.
             // The listener takes care of batching moves so we don't have to deal with that here.
+            ALOGD_READER("dispatchTouches action MOVE now(ns): %lld",now);
             dispatchMotion(when, policyFlags, mSource,
                     AMOTION_EVENT_ACTION_MOVE, 0, 0, metaState, buttonState,
                     AMOTION_EVENT_EDGE_FLAG_NONE,
@@ -4383,7 +4676,7 @@ void TouchInputMapper::dispatchTouches(nsecs_t when, uint32_t policyFlags) {
         // Dispatch pointer up events.
         while (!upIdBits.isEmpty()) {
             uint32_t upId = upIdBits.clearFirstMarkedBit();
-
+	    ALOGD_READER("dispatchTouches action UP now(ns): %lld",now);
             dispatchMotion(when, policyFlags, mSource,
                     AMOTION_EVENT_ACTION_POINTER_UP, 0, 0, metaState, buttonState, 0,
                     mLastCookedState.cookedPointerData.pointerProperties,
@@ -4398,6 +4691,7 @@ void TouchInputMapper::dispatchTouches(nsecs_t when, uint32_t policyFlags) {
         // events, they do not generally handle them except when presented in a move event.
         if (moveNeeded && !moveIdBits.isEmpty()) {
             ALOG_ASSERT(moveIdBits.value == dispatchedIdBits.value);
+	    ALOGD_READER("dispatchTouches action MOVE now(ns): %lld",now);
             dispatchMotion(when, policyFlags, mSource,
                     AMOTION_EVENT_ACTION_MOVE, 0, 0, metaState, buttonState, 0,
                     mCurrentCookedState.cookedPointerData.pointerProperties,
@@ -4415,7 +4709,7 @@ void TouchInputMapper::dispatchTouches(nsecs_t when, uint32_t policyFlags) {
                 // First pointer is going down.  Set down time.
                 mDownTime = when;
             }
-
+	    ALOGD_READER("dispatchTouches action DOWN now(ns): %lld",now);
             dispatchMotion(when, policyFlags, mSource,
                     AMOTION_EVENT_ACTION_POINTER_DOWN, 0, 0, metaState, buttonState, 0,
                     mCurrentCookedState.cookedPointerData.pointerProperties,
@@ -6073,6 +6367,7 @@ void TouchInputMapper::dispatchMotion(nsecs_t when, uint32_t policyFlags, uint32
             action, actionButton, flags, metaState, buttonState, edgeFlags,
             mViewport.displayId, pointerCount, pointerProperties, pointerCoords,
             xPrecision, yPrecision, downTime);
+    ALOGD_READER("notifyMotion call dispatcher");
     getListener()->notifyMotion(&args);
 }
 

@@ -305,6 +305,10 @@ public:
     /* Gets a pointer controller associated with the specified cursor device (ie. a mouse). */
     virtual sp<PointerControllerInterface> obtainPointerController(int32_t deviceId) = 0;
 
+    /* SPRD: add mouse acquirement @ { */
+    virtual void updateIcon() = 0;
+    /* @ } */
+
     /* Notifies the input reader policy that some input devices have changed
      * and provides information about all current input devices.
      */
@@ -372,6 +376,12 @@ public:
     virtual void vibrate(int32_t deviceId, const nsecs_t* pattern, size_t patternSize,
             ssize_t repeat, int32_t token) = 0;
     virtual void cancelVibrate(int32_t deviceId, int32_t token) = 0;
+    /* SPRD: add mouse acquirement @ { */
+    virtual void setInteractive(bool isActive) = 0;
+    virtual void setEnableFor3rdApp(bool enable) = 0;
+    virtual bool getEnableFor3rdApp() = 0;
+    virtual bool getScrollMode() = 0;
+    /* @ } */
 };
 
 struct StylusState {
@@ -469,6 +479,12 @@ public:
     virtual void vibrate(int32_t deviceId, const nsecs_t* pattern, size_t patternSize,
             ssize_t repeat, int32_t token);
     virtual void cancelVibrate(int32_t deviceId, int32_t token);
+    /* SPRD: add mouse acquirement @ { */
+    virtual void setInteractive(bool isActive);
+    virtual void setEnableFor3rdApp(bool enable);
+    virtual bool getEnableFor3rdApp();
+    virtual bool getScrollMode();
+    /* @ } */
 
 protected:
     // These members are protected so they can be instrumented by test cases.
@@ -679,6 +695,10 @@ public:
 
     uint32_t getButtonState() const;
 
+    /* SPRD: add mouse acquirement @ { */
+    void setButtonState(const RawEvent* rawEvent);
+    /* @ } */
+
 private:
     bool mBtnLeft;
     bool mBtnRight;
@@ -703,6 +723,10 @@ public:
     void process(const RawEvent* rawEvent);
     void finishSync();
 
+    /* SPRD: add mouse acquirement @ { */
+    void setRelXY(DisplayViewport v,const RawEvent* rawEvent);
+    /* @ } */
+
     inline int32_t getRelativeX() const { return mRelX; }
     inline int32_t getRelativeY() const { return mRelY; }
 
@@ -724,6 +748,10 @@ public:
 
     void process(const RawEvent* rawEvent);
     void finishSync();
+
+    /* SPRD: add mouse acquirement @ { */
+    void setRelWH(float x,float y,DisplayViewport v,const RawEvent* rawEvent);
+    /* @ } */
 
     inline bool haveRelativeVWheel() const { return mHaveRelWheel; }
     inline bool haveRelativeHWheel() const { return mHaveRelHWheel; }
@@ -1229,6 +1257,16 @@ private:
     void dumpParameters(String8& dump);
 
     void sync(nsecs_t when);
+
+    /* SPRD: add mouse acquirement @ { */
+    timer_t mTimerId;
+    DisplayViewport mDisplayView;
+
+public:
+    RawEvent mRawEvent;
+    void longProcess(RawEvent* rawEvent);
+    bool isNavKeyEvent();
+    /* @ } */
 };
 
 

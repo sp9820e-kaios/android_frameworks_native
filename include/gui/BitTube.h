@@ -87,6 +87,8 @@ private:
 
     static ssize_t recvObjects(const sp<BitTube>& tube,
             void* events, size_t count, size_t objSize);
+
+    void setSocketName(int socket0, int socket1);
 };
 
 // ----------------------------------------------------------------------------

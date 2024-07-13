@@ -380,7 +380,12 @@ static status_t selectEGLConfig(EGLDisplay display, EGLint format,
         attribs[EGL_RED_SIZE]                   = 8;
         attribs[EGL_GREEN_SIZE]                 = 8;
         attribs[EGL_BLUE_SIZE]                  = 8;
-        wantedAttribute                         = EGL_NONE;
+#ifdef ENABLE_FRAMEBUFFER_AFBC
+	attribs[EGL_CONFIG_ID]                  = 19;
+    	attribs[EGL_BUFFER_SIZE]                = 24;
+	attribs[EGL_ALPHA_SIZE]                 = 0;
+#endif
+	wantedAttribute                         = EGL_NONE;
         wantedAttributeValue                    = EGL_NONE;
     } else {
         // if no renderable type specified, fallback to a simplified query

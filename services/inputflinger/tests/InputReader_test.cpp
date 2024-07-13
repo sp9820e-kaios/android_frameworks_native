@@ -191,6 +191,11 @@ private:
         return mPointerControllers.valueFor(deviceId);
     }
 
+    /* SPRD: add mouse acquirement @ { */
+    virtual void updateIcon() {
+    }
+    /* @ } */
+
     virtual void notifyInputDevicesChanged(const Vector<InputDeviceInfo>& inputDevices) {
         mInputDevices = inputDevices;
     }

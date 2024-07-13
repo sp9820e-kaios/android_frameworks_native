@@ -39,10 +39,20 @@ sources := \
     TextOutput.cpp \
 
 LOCAL_PATH:= $(call my-dir)
+$(warning sec:${USE_PROJECT_SEC})
 
 include $(CLEAR_VARS)
+
+ifeq ($(USE_PROJECT_SEC),true)
+LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+$(TOP)/external/sqlite/dist
+LOCAL_SHARED_LIBRARIES := libsqlite
+LOCAL_CFLAGS += -DUSE_PROJECT_SEC
+LOCAL_LDFLAGS_64 := $(TOP)/frameworks/native/libs/libsecbinder/libsecbinder.a
+LOCAL_LDFLAGS_32 := $(TOP)/frameworks/native/libs/libsecbinder/lib_32/libsecbinder.a
+endif
 LOCAL_MODULE := libbinder
-LOCAL_SHARED_LIBRARIES := liblog libcutils libutils
+LOCAL_SHARED_LIBRARIES += liblog libcutils libutils
 LOCAL_SRC_FILES := $(sources)
 ifneq ($(TARGET_USES_64_BIT_BINDER),true)
 ifneq ($(TARGET_IS_64_BIT),true)

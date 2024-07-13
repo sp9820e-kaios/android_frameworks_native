@@ -74,8 +74,16 @@ public:
 
     virtual void resizeBuffers(const uint32_t w, const uint32_t h) = 0;
 
+    inline int getFBFormat() const
+    {
+        return mFBFormat;
+    }
+
 protected:
-    DisplaySurface() {}
+    int mFBFormat;
+    DisplaySurface()
+    : mFBFormat(HAL_PIXEL_FORMAT_RGBA_8888)
+    {}
     virtual ~DisplaySurface() {}
 };
 

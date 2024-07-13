@@ -385,6 +385,7 @@ static const InputEventLabel FLAGS[] = {
     DEFINE_FLAG(VIRTUAL),
     DEFINE_FLAG(FUNCTION),
     DEFINE_FLAG(GESTURE),
+    DEFINE_FLAG(WAKE),
 
     { NULL, 0 }
 };

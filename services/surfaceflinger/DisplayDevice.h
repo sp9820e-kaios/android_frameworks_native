@@ -116,6 +116,7 @@ public:
     int                     getOrientation() const { return mOrientation; }
     uint32_t                getOrientationTransform() const;
     const Transform&        getTransform() const { return mGlobalTransform; }
+    const Transform&		getOriginalTransform() const { return mOriginalTransform; }
     const Rect              getViewport() const { return mViewport; }
     const Rect              getFrame() const { return mFrame; }
     const Rect&             getScissor() const { return mScissor; }
@@ -211,7 +212,7 @@ private:
      */
     static status_t orientationToTransfrom(int orientation,
             int w, int h, Transform* tr);
-
+    void setDisplayDevice();
     uint32_t mLayerStack;
     int mOrientation;
     // user-provided visible area of the layer stack
@@ -221,6 +222,8 @@ private:
     // pre-computed scissor to apply to the display
     Rect mScissor;
     Transform mGlobalTransform;
+    Transform mOriginalTransform;
+    Transform mDisplayTransform;
     bool mNeedsFiltering;
     // Current power mode
     int mPowerMode;

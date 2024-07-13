@@ -8,16 +8,16 @@
 //#define LOG_NDEBUG 0
 
 // Log debug messages about channel messages (send message, receive message)
-#define DEBUG_CHANNEL_MESSAGES 0
+#define DEBUG_CHANNEL_MESSAGES 1
 
 // Log debug messages whenever InputChannel objects are created/destroyed
-#define DEBUG_CHANNEL_LIFECYCLE 0
+#define DEBUG_CHANNEL_LIFECYCLE 1
 
 // Log debug messages about transport actions
-#define DEBUG_TRANSPORT_ACTIONS 0
+#define DEBUG_TRANSPORT_ACTIONS 1
 
 // Log debug messages about touch event resampling
-#define DEBUG_RESAMPLING 0
+#define DEBUG_RESAMPLING 1
 
 
 #include <errno.h>
@@ -26,12 +26,18 @@
 #include <math.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <cutils/log.h>
 #include <cutils/properties.h>
 #include <input/InputTransport.h>
 
+// SPRD: Switch debug log by command @{
+static bool gInputTransportLog = false;
+#undef ALOGD
+#define ALOGD(...) if (gInputTransportLog) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+/// @}
 
 namespace android {
 
@@ -127,6 +133,13 @@ status_t InputChannel::openInputChannelPair(const String8& name,
         outServerChannel.clear();
         outClientChannel.clear();
         return result;
+    }
+
+    // SPRD: Set a name for socket, which is used for debug
+    char value[PROPERTY_VALUE_MAX];
+    property_get("ro.debuggable", value, "");
+    if (strcmp(value, "1") == 0) {
+        setSocketName(sockets[0], sockets[1]);
     }
 
     int bufferSize = SOCKET_BUFFER_SIZE;
@@ -226,6 +239,61 @@ sp<InputChannel> InputChannel::dup() const {
     return fd >= 0 ? new InputChannel(getName(), fd) : NULL;
 }
 
+// SPRD: Switch debug log by command
+void InputChannel::switchInputTransportLog(bool enable) {
+    gInputTransportLog = enable;
+}
+
+static const int FILE_NAME_LEN = 1024;
+static const int SOCKET_NAME_LEN = 108;
+
+//SPRD: bind a name to sockets
+void InputChannel::setSocketName(int socket0, int socket1)
+{
+    struct sockaddr_un sockAddr;
+    char sockName[SOCKET_NAME_LEN];
+    FILE *fp;
+    char fileName[sizeof("/proc/%u/comm") + sizeof(int)*3];
+    char pidName[FILE_NAME_LEN] = {'\0'};
+    char tidName[FILE_NAME_LEN] = {'\0'};
+    int pid = getpid();
+    int tid = gettid();
+
+    sprintf(fileName, "/proc/%d/comm", pid);
+    if((fp = fopen(fileName, "r")) != NULL) {
+        if (fgets(pidName, FILE_NAME_LEN, fp) != NULL)
+            pidName[strlen(pidName) - 1] = '\0';
+        fclose(fp);
+    }
+
+    sprintf(fileName, "/proc/%d/comm", tid);
+    if((fp = fopen(fileName, "r")) != NULL) {
+        if (fgets(tidName, FILE_NAME_LEN, fp) != NULL)
+            tidName[strlen(tidName) - 1] = '\0';
+        fclose(fp);
+    }
+
+    if (pidName[0] == '\0')
+        sprintf(pidName, "t%d", pid);
+    if (tidName[0] == '\0')
+        sprintf(tidName, "t%d", tid);
+
+    if (socket0 >= 0) {
+        snprintf(sockName, SOCKET_NAME_LEN - 1, "%s-%s-f%d", pidName, tidName, socket0);
+        memset(&sockAddr, 0, sizeof(sockAddr));
+        sockAddr.sun_family = AF_UNIX;
+        strncpy(sockAddr.sun_path + 1, sockName, sizeof(sockAddr.sun_path) - 2);
+        bind(socket0, reinterpret_cast<struct sockaddr *> (&sockAddr), sizeof(struct sockaddr_un));
+    }
+
+    if (socket1 >= 0) {
+        snprintf(sockName, SOCKET_NAME_LEN - 1, "%s-%s-f%d", pidName, tidName, socket1);
+        memset(&sockAddr, 0, sizeof(sockAddr));
+        sockAddr.sun_family = AF_UNIX;
+        strncpy(sockAddr.sun_path + 1, sockName, sizeof(sockAddr.sun_path) - 2);
+        bind(socket1, reinterpret_cast<struct sockaddr *> (&sockAddr), sizeof(struct sockaddr_un));
+    }
+}
 
 // --- InputPublisher ---
 

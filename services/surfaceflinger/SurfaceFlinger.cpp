@@ -436,6 +436,7 @@ void SurfaceFlinger::init() {
     ALOGI(  "SurfaceFlinger's main thread ready to run. "
             "Initializing graphics H/W...");
 
+    uint32_t builtInDisplayNum = DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES;
     Mutex::Autolock _l(mStateLock);
 
     // initialize EGL for the default display
@@ -455,9 +456,13 @@ void SurfaceFlinger::init() {
 
     LOG_ALWAYS_FATAL_IF(mEGLContext == EGL_NO_CONTEXT,
             "couldn't create EGLContext");
-
+    builtInDisplayNum = mHwc->getBuiltInDisplayNum();
+    if (builtInDisplayNum > DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES)
+    {
+        builtInDisplayNum = DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES;
+    }
     // initialize our non-virtual displays
-    for (size_t i=0 ; i<DisplayDevice::NUM_BUILTIN_DISPLAY_TYPES ; i++) {
+    for (size_t i=0 ; i<builtInDisplayNum ; i++) {
         DisplayDevice::DisplayType type((DisplayDevice::DisplayType)i);
         // set-up the displays that are already connected
         if (mHwc->isConnected(i) || type==DisplayDevice::DISPLAY_PRIMARY) {
@@ -625,6 +630,20 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
 
         info.w = hwConfig.width;
         info.h = hwConfig.height;
+        char property[PROPERTY_VALUE_MAX];
+        if ((type == DisplayDevice::DISPLAY_PRIMARY)
+            && (property_get("ro.sf.hwrotation", property, NULL) > 0)) {
+            //displayOrientation
+            switch (atoi(property)) {
+                case 90:
+                case 270:
+                info.w = hwConfig.height;
+                info.h = hwConfig.width;
+                break;
+                default:
+                break;
+            }
+        }
         info.xdpi = xdpi;
         info.ydpi = ydpi;
         info.fps = float(1e9 / hwConfig.refresh);
@@ -1056,7 +1075,7 @@ void SurfaceFlinger::rebuildLayerStacks() {
             Region dirtyRegion;
             Vector< sp<Layer> > layersSortedByZ;
             const sp<DisplayDevice>& hw(mDisplays[dpy]);
-            const Transform& tr(hw->getTransform());
+            const Transform& tr(hw->getOriginalTransform());
             const Rect bounds(hw->getBounds());
             if (hw->isDisplayOn()) {
                 SurfaceFlinger::computeVisibleRegions(layers,
@@ -1960,7 +1979,10 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const 
 
     const Vector< sp<Layer> >& layers(hw->getVisibleLayersSortedByZ());
     const size_t count = layers.size();
-    const Transform& tr = hw->getTransform();
+    const Transform& tr = hw->getOriginalTransform();
+#if defined(LAYER_DUMP_BMP)
+    //layer_count = 0;
+#endif
     if (cur != end) {
         // we're using h/w composer
         for (size_t i=0 ; i<count && cur!=end ; ++i, ++cur) {
@@ -1982,6 +2004,9 @@ bool SurfaceFlinger::doComposeSurfaces(const sp<const DisplayDevice>& hw, const 
                         break;
                     }
                     case HWC_FRAMEBUFFER: {
+                        #if defined(LAYER_DUMP_BMP)
+                        //layer_count++;
+                        #endif
                         layer->draw(hw, clip);
                         break;
                     }
@@ -2277,6 +2302,7 @@ status_t SurfaceFlinger::createLayer(
 
     switch (flags & ISurfaceComposerClient::eFXSurfaceMask) {
         case ISurfaceComposerClient::eFXSurfaceNormal:
+        case ISurfaceComposerClient::eFXSurfaceNoDisp:
             result = createNormalLayer(client,
                     name, w, h, flags, format,
                     handle, gbp, &layer);
@@ -2299,7 +2325,7 @@ status_t SurfaceFlinger::createLayer(
     if (result != NO_ERROR) {
         return result;
     }
-
+    if(!(flags & ISurfaceComposerClient::eFXSurfaceNoDisp))
     setTransactionFlags(eTransactionNeeded);
     return result;
 }
@@ -3295,7 +3321,9 @@ void SurfaceFlinger::renderScreenImplLocked(
             if (state.z >= minLayerZ && state.z <= maxLayerZ) {
                 if (layer->isVisible()) {
                     if (filtering) layer->setFiltering(true);
+                    layer->setCaptureScreen(true);
                     layer->draw(hw, useIdentityTransform);
+                    layer->setCaptureScreen(false);
                     if (filtering) layer->setFiltering(false);
                 }
             }

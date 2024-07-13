@@ -88,7 +88,8 @@ HWComposer::HWComposer(
       mFbDev(0), mHwc(0), mNumDisplays(1),
       mCBContext(new cb_context),
       mEventHandler(handler),
-      mDebugForceFakeVSync(false)
+      mDebugForceFakeVSync(false),
+      mBuiltInDisplayNum(NUM_BUILTIN_DISPLAYS)
 {
     for (size_t i =0 ; i<MAX_HWC_DISPLAYS ; i++) {
         mLists[i] = 0;
@@ -144,6 +145,7 @@ HWComposer::HWComposer(
                 mCBContext->procs.hotplug = NULL;
             memset(mCBContext->procs.zero, 0, sizeof(mCBContext->procs.zero));
             mHwc->registerProcs(mHwc, &mCBContext->procs);
+            mHwc->getBuiltInDisplayNum(mHwc, &mBuiltInDisplayNum);
         }
 
         // don't need a vsync thread if we have a hardware composer
@@ -181,7 +183,7 @@ HWComposer::HWComposer(
         disp.currentConfig = 0;
     } else if (mHwc) {
         // here we're guaranteed to have at least HWC 1.1
-        for (size_t i =0 ; i<NUM_BUILTIN_DISPLAYS ; i++) {
+        for (size_t i =0 ; i<mBuiltInDisplayNum ; i++) {
             queryDisplayProperties(i);
         }
     }
@@ -403,7 +405,11 @@ status_t HWComposer::queryDisplayProperties(int disp) {
     }
 
     // FIXME: what should we set the format to?
-    mDisplayData[disp].format = HAL_PIXEL_FORMAT_RGBA_8888;
+	mDisplayData[disp].format = HAL_PIXEL_FORMAT_RGBA_8888;
+#ifdef ENABLE_FRAMEBUFFER_AFBC
+	if (disp == HWC_DISPLAY_PRIMARY)
+	mDisplayData[disp].format = HAL_PIXEL_FORMAT_RGB_888;
+#endif
     mDisplayData[disp].connected = true;
     return NO_ERROR;
 }
@@ -465,7 +471,12 @@ sp<Fence> HWComposer::getDisplayFence(int disp) const {
 
 uint32_t HWComposer::getFormat(int disp) const {
     if (static_cast<uint32_t>(disp) >= MAX_HWC_DISPLAYS || !mAllocatedDisplayIDs.hasBit(disp)) {
-        return HAL_PIXEL_FORMAT_RGBA_8888;
+    uint32_t result = HAL_PIXEL_FORMAT_RGBA_8888;
+#ifdef ENABLE_FRAMEBUFFER_AFBC
+	if (disp == HWC_DISPLAY_PRIMARY)
+	result = HAL_PIXEL_FORMAT_RGB_888;
+#endif
+	return result;
     } else {
         return mDisplayData[disp].format;
     }
@@ -827,7 +838,7 @@ int HWComposer::getVisualID() const {
         // FIXME: temporary hack until HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED
         // is supported by the implementation. we can only be in this case
         // if we have HWC 1.1
-        return HAL_PIXEL_FORMAT_RGBA_8888;
+	return HAL_PIXEL_FORMAT_RGBA_8888;
         //return HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED;
     } else {
         return mFbDev->format;
@@ -1307,7 +1318,6 @@ HWComposer::DisplayData::DisplayData()
     outbufHandle(NULL), outbufAcquireFence(Fence::NO_FENCE),
     events(0)
 {}
-
 HWComposer::DisplayData::~DisplayData() {
     free(list);
 }

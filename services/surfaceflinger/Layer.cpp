@@ -84,7 +84,8 @@ Layer::Layer(SurfaceFlinger* flinger, const sp<Client>& client,
         mQueueItemCondition(),
         mQueueItems(),
         mLastFrameNumberReceived(0),
-        mUpdateTexImageFailed(false)
+        mUpdateTexImageFailed(false),
+        mCaptureScreen(false)
 {
     mCurrentCrop.makeInvalid();
     mFlinger->getRenderEngine().genTextures(1, &mTextureName);
@@ -492,6 +493,7 @@ void Layer::setGeometry(
     }
     Rect frame(s.transform.transform(computeBounds(activeTransparentRegion)));
     frame.intersect(hw->getViewport(), &frame);
+    //const Transform& tr(hw->getOriginalTransform());
     const Transform& tr(hw->getTransform());
     layer.setFrame(tr.transform(frame));
     layer.setCrop(computeCrop(hw));
@@ -548,7 +550,7 @@ void Layer::setPerFrameData(const sp<const DisplayDevice>& hw,
     // after HWComposer::commit() -- every frame.
     // Apply this display's projection's viewport to the visible region
     // before giving it to the HWC HAL.
-    const Transform& tr = hw->getTransform();
+    const Transform& tr = hw->getOriginalTransform();
     Region visible = tr.transform(visibleRegion.intersect(hw->getViewport()));
     layer.setVisibleRegionScreen(visible);
     layer.setSurfaceDamage(surfaceDamageRegion);
@@ -790,6 +792,9 @@ bool Layer::getFiltering() const {
     return mFiltering;
 }
 
+void Layer::setCaptureScreen(bool captureScreen) {
+	mCaptureScreen = captureScreen;
+}
 // As documented in libhardware header, formats in the range
 // 0x100 - 0x1FF are specific to the HAL implementation, and
 // are known to have no alpha channel
@@ -818,9 +823,27 @@ void Layer::computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
         bool useIdentityTransform) const
 {
     const Layer::State& s(getDrawingState());
-    const Transform tr(useIdentityTransform ?
+    Transform tr(useIdentityTransform ?
             hw->getTransform() : hw->getTransform() * s.transform);
-    const uint32_t hw_h = hw->getHeight();
+    uint32_t hw_h = hw->getHeight();
+	char property[PROPERTY_VALUE_MAX];
+    if ((hw->getDisplayType() == DisplayDevice::DISPLAY_PRIMARY)
+        && (property_get("ro.sf.hwrotation", property, NULL) > 0)) {
+        if (mCaptureScreen) {
+            tr = hw->getOriginalTransform() * s.transform;
+        } else {
+            //displayOrientation
+            switch (atoi(property)) {
+                case 90:
+                case 270:
+                hw_h = hw->getWidth();
+                break;
+                default:
+                break;
+            }
+        }
+    }
+
     Rect win(s.active.w, s.active.h);
     if (!s.active.crop.isEmpty()) {
         win.intersect(s.active.crop, &win);

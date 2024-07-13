@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Copyright (C) 2014 The Android Open Source Project
+<!-- Copyright (C) 2009 The Android Open Source Project
 
      Licensed under the Apache License, Version 2.0 (the "License");
      you may not use this file except in compliance with the License.
@@ -14,11 +14,9 @@
      limitations under the License.
 -->
 
-<!-- This is the standard feature indicating that the device supports managed users. -->
+<!-- This is the standard set of features for a camera with a flash. -->
 <permissions>
-    <!-- SPRD:Modify for bug 524560 @{
-    <feature name="android.software.managed_users" />
-    -->
-    <feature name="android.software.managed_users" notLowRam="true" />
-    <!-- @} -->
+    <feature name="android.hardware.camera.any" />
+    <feature name="android.hardware.camera" />
+    <feature name="android.hardware.camera.flash" />
 </permissions>

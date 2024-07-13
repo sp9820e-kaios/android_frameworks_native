@@ -104,6 +104,14 @@ typedef struct {
     dir_rec_t* dirs;
 } dir_rec_array_t;
 
+//SPRD: add for backup app @{
+typedef struct {
+    int mode;
+    int uid;
+    int gid;
+} arg_chown;
+// @}
+
 extern dir_rec_t android_app_dir;
 extern dir_rec_t android_app_private_dir;
 extern dir_rec_t android_app_lib_dir;
@@ -112,6 +120,10 @@ extern dir_rec_t android_asec_dir;
 extern dir_rec_t android_media_dir;
 extern dir_rec_t android_mnt_expand_dir;
 extern dir_rec_array_t android_system_dirs;
+// SPRD: add feature for scan the preload directory
+extern dir_rec_t android_app_preload_dir;
+// SPRD: add feature for scan the vital directory
+extern dir_rec_t android_app_vital_dir;
 
 typedef struct cache_dir_struct {
     struct cache_dir_struct* parent;
@@ -256,3 +268,7 @@ int calculate_oat_file_path(char path[PKG_PATH_MAX], const char *oat_dir, const 
 int move_package_dir(char path[PKG_PATH_MAX], const char *oat_dir, const char *apk_path,
                             const char *instruction_set);
 int link_file(const char *relative_path, const char *from_base, const char *to_base);
+//SPRD: add for backup app @{
+int backup_app(const char* pkgname, const char* dest_path, int uid, int gid);
+int restore_app(const char* source_path, const char* pkgname, int uid, int gid);
+// @}

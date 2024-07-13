@@ -185,6 +185,18 @@ static int do_link_file(char **arg, char reply[REPLY_MAX] __unused)
     return link_file(arg[0], arg[1], arg[2]);
 }
 
+//SPRD: add for backup app @
+static int do_backup_app(char **arg, char reply[REPLY_MAX] __unused)
+{
+    return backup_app(arg[0], arg[1], atoi(arg[2]), atoi(arg[3]));
+}
+
+static int do_restore_app(char **arg, char reply[REPLY_MAX] __unused)
+{
+    return restore_app(arg[0], arg[1], atoi(arg[2]), atoi(arg[3]));
+}
+//@}
+
 struct cmdinfo {
     const char *name;
     unsigned numargs;
@@ -215,6 +227,10 @@ struct cmdinfo cmds[] = {
     { "idmap",                3, do_idmap },
     { "restorecondata",       4, do_restorecon_data },
     { "createoatdir",         2, do_create_oat_dir },
+    //SPRD: add for backup app @{
+    { "backupapp", 4, do_backup_app },
+    { "restoreapp", 4, do_restore_app },
+    // @}
     { "rmpackagedir",         1, do_rm_package_dir },
     { "linkfile",             3, do_link_file }
 };
@@ -374,7 +390,7 @@ int initialize_globals() {
     }
 
     // Take note of the system and vendor directories.
-    android_system_dirs.count = 4;
+    android_system_dirs.count = 6;
 
     android_system_dirs.dirs = (dir_rec_t*) calloc(android_system_dirs.count, sizeof(dir_rec_t));
     if (android_system_dirs.dirs == NULL) {
@@ -400,6 +416,16 @@ int initialize_globals() {
     android_system_dirs.dirs[3].path = strdup("/oem/app/");
     android_system_dirs.dirs[3].len = strlen(android_system_dirs.dirs[3].path);
 
+    /* SPRD: add feature for scan the preload and vital directory @{ */
+    android_app_preload_dir.path = strdup("/system/preloadapp/");
+    android_app_preload_dir.len = strlen(android_app_preload_dir.path);
+    android_app_vital_dir.path = strdup("/system/vital-app/");
+    android_app_vital_dir.len = strlen(android_app_vital_dir.path);
+    android_system_dirs.dirs[4].path = android_app_preload_dir.path;
+    android_system_dirs.dirs[4].len = android_app_preload_dir.len;
+    android_system_dirs.dirs[5].path = android_app_vital_dir.path;
+    android_system_dirs.dirs[5].len = android_app_vital_dir.len;
+	/* @} */
     return 0;
 }
 

@@ -77,6 +77,7 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, int32_t dispId,
     // with GLES. If the consumer needs CPU access, use the default format
     // set by the consumer. Otherwise allow gralloc to decide the format based
     // on usage bits.
+#if 0
     int sinkUsage;
     sink->query(NATIVE_WINDOW_CONSUMER_USAGE_BITS, &sinkUsage);
     if (sinkUsage & (GRALLOC_USAGE_SW_READ_MASK | GRALLOC_USAGE_SW_WRITE_MASK)) {
@@ -86,7 +87,22 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, int32_t dispId,
     } else {
         mDefaultOutputFormat = HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED;
     }
+#else
+    int sinkFormat;
+    sink->query(NATIVE_WINDOW_FORMAT, &sinkFormat);
+    mDefaultOutputFormat = sinkFormat;
+#endif
     mOutputFormat = mDefaultOutputFormat;
+    if (sForceHwcCopy)
+    {
+        int scratchFormat;
+        bqProducer->query(NATIVE_WINDOW_FORMAT, &scratchFormat);
+        mFBFormat = scratchFormat;
+    }
+    else
+    {
+        mFBFormat = mDefaultOutputFormat;
+    }
 
     ConsumerBase::mName = String8::format("VDS: %s", mDisplayName.string());
     mConsumer->setConsumerName(ConsumerBase::mName);

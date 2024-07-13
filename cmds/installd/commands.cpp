@@ -40,6 +40,10 @@ dir_rec_t android_app_lib_dir;
 dir_rec_t android_media_dir;
 dir_rec_t android_mnt_expand_dir;
 dir_rec_array_t android_system_dirs;
+// SPRD: add feature for scan the preload directory
+dir_rec_t android_app_preload_dir;
+// SPRD: add feature for scan the vital directory
+dir_rec_t android_app_vital_dir;
 
 static const char* kCpPath = "/system/bin/cp";
 
@@ -996,7 +1000,9 @@ static int wait_child(pid_t pid)
  * Otherwise, return default value.
  */
 static bool kAlwaysProvideSwapFile = false;
-static bool kDefaultProvideSwapFile = true;
+/* SPRD: modify 20160112 Spreadtrum of 519478, only create swap in low_ram or dalvik.vm.dex2oat-swap is specified true */
+// static bool kDefaultProvideSwapFile = true;
+static bool kDefaultProvideSwapFile = false;
 
 static bool ShouldUseSwapFileForDexopt() {
     if (kAlwaysProvideSwapFile) {
@@ -1063,6 +1069,30 @@ static bool calculate_odex_file_path(char path[PKG_PATH_MAX],
     }
     strcpy(end + 1, "odex");
     return true;
+}
+
+int update_oom_score_adj(pid_t pid, int oom_score_adj) {
+    int result = 0;
+    int oom_fd = -1;
+    char oom_adj[128] = {0};
+
+    sprintf(oom_adj, "/proc/%d/oom_score_adj", pid);
+    oom_fd = open(oom_adj, O_WRONLY);
+
+    if (-1 == oom_fd) {
+        ALOGD("update_process_adj, open adj file: %s failed. error: %s", oom_adj, strerror(errno));
+        result = -1;
+    } else {
+        sprintf(oom_adj, "%d", oom_score_adj);
+        if (write(oom_fd, oom_adj, strlen(oom_adj)) == -1) {
+            result = -1;
+            ALOGD("update_process_adj, process[%d] to adj[%d] failed. error: %s\n", pid, oom_score_adj, strerror(errno));
+        }
+        close(oom_fd);
+    }
+
+    ALOGD("installd, update_process_adj sucess.");
+    return result;
 }
 
 int dexopt(const char *apk_path, uid_t uid, bool is_public,
@@ -1176,9 +1206,18 @@ int dexopt(const char *apk_path, uid_t uid, bool is_public,
 
     ALOGV("DexInv: --- BEGIN '%s' ---\n", input_file);
 
+dex2oat_killed_by_signal:
     pid_t pid;
     pid = fork();
     if (pid == 0) {
+
+        // update dex2oat process adj to 0, if we are not in vm_safe_mode
+        if (!vm_safe_mode && dexopt_needed == DEXOPT_DEX2OAT_NEEDED) {
+            if (update_oom_score_adj(getpid(), 0) == -1) {
+                ALOGD("installd failed to update process adj to 0.");
+            }
+        }
+
         /* child -- drop privileges before continuing */
         if (setgid(uid) != 0) {
             ALOGE("setgid(%d) failed in installd during dexopt\n", uid);
@@ -1232,6 +1271,12 @@ int dexopt(const char *apk_path, uid_t uid, bool is_public,
         res = wait_child(pid);
         if (res == 0) {
             ALOGV("DexInv: --- END '%s' (success) ---\n", input_file);
+        } else if (WIFSIGNALED(res)) {
+            if (!vm_safe_mode && dexopt_needed == DEXOPT_DEX2OAT_NEEDED) {
+                vm_safe_mode = true;
+                ALOGD("dex2oat process[%d] killed by signal [%d], retry with vm_safe_mode.", pid, WTERMSIG(res));
+                goto dex2oat_killed_by_signal;
+            }
         } else {
             ALOGE("DexInv: --- END '%s' --- status=0x%04x, process failed\n", input_file, res);
             goto fail;
@@ -1860,3 +1905,155 @@ int calculate_oat_file_path(char path[PKG_PATH_MAX], const char *oat_dir, const 
     snprintf(path, PKG_PATH_MAX, "%s/%s/%s.odex", oat_dir, instruction_set, file_name);
     return 0;
 }
+
+//SPRD: add for backup app @{
+static int copy_file(const char* src, const char* dest, arg_chown* arg) {
+	FILE *fpSrc, *fpDest;
+	fpSrc = fopen(src, "rb");
+	if (fpSrc == NULL) {
+		ALOGE( "Source file open failure.\n");
+		return -1;
+	}
+	fpDest = fopen(dest, "wb");
+	if (fpDest == NULL) {
+		ALOGE("Destination file open failure.\n");
+		return -1;
+	}
+	int c;
+	while ((c = fgetc(fpSrc)) != EOF) {
+		fputc(c, fpDest);
+	}
+	fclose(fpSrc);
+	fclose(fpDest);
+	if (arg != NULL) {
+		if (chmod(dest, arg->mode) < 0) {
+			ALOGE("cannot chmod file '%s': %s\n", dest, strerror(errno));
+		}
+		if (chown(dest, arg->uid, arg->gid) < 0) {
+			ALOGE("cannot chown file '%s': %s\n", dest, strerror(errno));
+		}
+	}
+	return 0;
+}
+
+static inline int is_dir(const char* path) {
+	if (access(path, 0))
+		return 0;
+	struct stat info;
+	stat(path, &info);
+	return S_ISDIR(info.st_mode);
+}
+
+static size_t file_name_predeal(char* new_name, const char* name) {
+	strcpy(new_name, name);
+	size_t index = strlen(name) - 1;
+	if (new_name[index] != '/') {
+		new_name[++index] = '/';
+	}
+	new_name[++index] = '\0';
+	return index;
+}
+
+static int create_dir(const char* name, arg_chown* arg) {
+	if (mkdir(name, 0777) < 0) {
+		ALOGE("dest folder: %s can't create, %s\n", name, strerror(errno));
+		return -1;
+	}
+	if (arg != NULL) {
+		if (chmod(name, arg->mode) < 0) {
+			ALOGE("cannot chmod file '%s': %s\n", name, strerror(errno));
+		}
+		if (chown(name, arg->uid, arg->gid) < 0) {
+			ALOGE("can not chown file '%s': %s\n", name, strerror(errno));
+		}
+	}
+	return 0;
+}
+
+static int _copy_folder(const char* src, const char* dest, char is_copy_lib,
+		arg_chown* arg) {
+	if (!is_dir(src)) {
+		ALOGE("file: %s is not a folder!\n", src);
+		return -2;
+	}
+	if (!is_dir(dest) && create_dir(dest, arg) < 0) {
+		return -1;
+	}
+	char srcfile_name[PKG_PATH_MAX];
+	size_t src_index = file_name_predeal(srcfile_name, src);
+	char destfile_name[PKG_PATH_MAX];
+	size_t dest_index = file_name_predeal(destfile_name, dest);
+	char* tmpp;
+
+	DIR *d = opendir(src);
+	if (d == NULL) {
+		ALOGE("in backup_app, Unable to opendir %s\n", src);
+		return -1;
+	}
+	struct dirent *de;
+	while ((de = readdir(d))) {
+		const char *name = de->d_name;
+		if (!strcmp(name, ".") || !strcmp(name, "..")) {
+			continue;
+		}
+		if (!is_copy_lib && !strcmp(name, "lib")) {
+			continue;
+		}
+		tmpp = srcfile_name + src_index;
+		strcpy(tmpp, name);
+		tmpp = destfile_name + dest_index;
+		strcpy(tmpp, name);
+		switch (de->d_type) {
+		case DT_DIR:
+			if (access(destfile_name, 0) == 0
+					|| create_dir(destfile_name, arg) >= 0) {
+				_copy_folder(srcfile_name, destfile_name, 1, arg);
+			}
+			break;
+		case DT_REG:
+			if (copy_file(srcfile_name, destfile_name, arg) < 0) {
+				ALOGW(
+						"copy file from %s to %s failed\n", srcfile_name, destfile_name);
+			}
+			break;
+		}
+	}
+	closedir(d);
+	return 0;
+}
+
+static int copy_folder(const char* src, const char* dest, char is_copy_lib,
+		arg_chown* arg) {
+	ALOGD("copy folder from %s to %s\n", src, dest);
+	if (arg->uid < 0 || arg->gid < 0) {
+		arg = NULL;
+	}
+	return _copy_folder(src, dest, is_copy_lib, arg);
+}
+
+int backup_app(const char* pkgname, const char* dest_path, int uid, int gid) {
+	char pkgdir[PKG_PATH_MAX];
+	if (create_pkg_path(pkgdir, pkgname, PKG_DIR_POSTFIX, 0)) {
+		ALOGE("in backup_app, cannot create package path\n");
+		return -1;
+	}
+	arg_chown arg;
+	arg.mode = 0771;
+	arg.uid = uid;
+	arg.gid = gid;
+	return copy_folder(pkgdir, dest_path, 0, &arg);
+}
+
+int restore_app(const char* src_path, const char* pkgname, int uid, int gid) {
+	char pkgdir[PKG_PATH_MAX];
+	if (create_pkg_path(pkgdir, pkgname, PKG_DIR_POSTFIX, 0)) {
+		ALOGE("in restore_app, cannot create package path\n");
+		return -1;
+	}
+	arg_chown arg;
+	arg.mode = 0771;
+	arg.uid = uid;
+	arg.gid = gid;
+	return copy_folder(src_path, pkgdir, 1, &arg);
+}
+// @}

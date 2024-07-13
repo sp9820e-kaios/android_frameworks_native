@@ -348,7 +348,7 @@ status_t BnGraphicBufferProducer::onTransact(
             uint32_t height = data.readUint32();
             PixelFormat format = static_cast<PixelFormat>(data.readInt32());
             uint32_t usage = data.readUint32();
-            int buf;
+            int buf = 0;
             sp<Fence> fence;
             int result = dequeueBuffer(&buf, &fence, async, width, height,
                     format, usage);
@@ -389,7 +389,7 @@ status_t BnGraphicBufferProducer::onTransact(
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
             sp<GraphicBuffer> buffer = new GraphicBuffer();
             data.read(*buffer.get());
-            int slot;
+            int slot = 0;
             int result = attachBuffer(&slot, buffer);
             reply->writeInt32(slot);
             reply->writeInt32(result);
@@ -402,6 +402,7 @@ status_t BnGraphicBufferProducer::onTransact(
             QueueBufferOutput* const output =
                     reinterpret_cast<QueueBufferOutput *>(
                             reply->writeInplace(sizeof(QueueBufferOutput)));
+            memset(output, 0, sizeof(QueueBufferOutput));
             status_t result = queueBuffer(buf, input, output);
             reply->writeInt32(result);
             return NO_ERROR;
@@ -416,7 +417,7 @@ status_t BnGraphicBufferProducer::onTransact(
         }
         case QUERY: {
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
-            int value;
+            int value = 0;
             int what = data.readInt32();
             int res = query(what, &value);
             reply->writeInt32(value);
@@ -434,6 +435,7 @@ status_t BnGraphicBufferProducer::onTransact(
             QueueBufferOutput* const output =
                     reinterpret_cast<QueueBufferOutput *>(
                             reply->writeInplace(sizeof(QueueBufferOutput)));
+            memset(output, 0, sizeof(QueueBufferOutput));
             status_t res = connect(listener, api, producerControlledByApp, output);
             reply->writeInt32(res);
             return NO_ERROR;

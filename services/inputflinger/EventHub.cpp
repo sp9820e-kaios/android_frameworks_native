@@ -1381,10 +1381,12 @@ void EventHub::createVirtualKeyboardLocked() {
     assignDescriptorLocked(identifier);
 
     Device* device = new Device(-1, VIRTUAL_KEYBOARD_ID, String8("<virtual>"), identifier);
-    device->classes = INPUT_DEVICE_CLASS_KEYBOARD
+    /* SPRD: add mouse acquirement @ { */
+    device->classes = INPUT_DEVICE_CLASS_CURSOR|INPUT_DEVICE_CLASS_KEYBOARD
             | INPUT_DEVICE_CLASS_ALPHAKEY
             | INPUT_DEVICE_CLASS_DPAD
             | INPUT_DEVICE_CLASS_VIRTUAL;
+    /* @ } */
     loadKeyMapLocked(device);
     addDeviceLocked(device);
 }

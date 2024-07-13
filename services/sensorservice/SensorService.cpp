@@ -1059,6 +1059,7 @@ status_t SensorService::flushSensor(const sp<SensorEventConnection>& connection,
             // For older devices just increment pending flush count which will send a trivial
             // flush complete event.
             connection->incrementPendingFlushCount(handle);
+            connection->sendPendingFlushEventsLocked();
         } else {
             if (!canAccessSensor(sensor->getSensor(), "Tried flushing", opPackageName)) {
                 err = INVALID_OPERATION;
